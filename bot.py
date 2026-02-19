@@ -2,13 +2,13 @@ import telebot
 import os
 import sys
 
-# Получаем настройки из Secrets репозитория GitHub
+# Настройки из Secrets
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 bot = telebot.TeleBot(TOKEN)
 
-# Список запрещенных слов (можешь дополнить своими)
+# Список стоп-слов
 SPAM_KEYWORDS = [
     "крипта", "инвестиции", "заработок", "выплаты", 
     "подпишись", "казино", "crypto", "invest", "trading"
@@ -18,8 +18,15 @@ def clean_chat():
     print(f"--- Запуск очистки чата {CHAT_ID} ---")
     
     try:
-        # Получаем последние обновления
-        updates = bot.get_updates(timeout=10, allowed_updates=["message"])
+        # 1. Получаем обновления. 
+        # offset=-1 заставляет Telegram отдать последние сообщения, даже если они "прочитаны"
+        updates = bot.get_updates(limit=100, timeout=10, offset=-100)
+        
+        if not updates:
+            print("Новых сообщений в очереди не найдено.")
+            return
+
+        print(f"Получено сообщений для анализа: {len(updates)}")
         
         for update in updates:
             if not update.message:
@@ -28,40 +35,37 @@ def clean_chat():
             msg = update.message
             user = msg.from_user
 
-            # Проверяем, что это сообщение из нужной нам группы
+            # Проверяем, что сообщение из нашей группы
             if str(msg.chat.id) != str(CHAT_ID):
                 continue
 
-            # 1. Удаляем сторонних ботов (кроме самого себя)
+            # Логика удаления ботов
             if user.is_bot and user.username != bot.get_me().username:
-                print(f"found: бот-спамер @{user.username}. Удаляю...")
+                print(f"Удаляю бота: @{user.username}")
                 try:
                     bot.ban_chat_member(CHAT_ID, user.id)
                     bot.delete_message(CHAT_ID, msg.message_id)
-                except Exception as e:
-                    print(f"Error banning bot: {e}")
+                except: pass
                 continue
 
-            # 2. Проверка текста на спам-фильтр
+            # Логика удаления по ключевым словам
             if msg.text:
                 text_lower = msg.text.lower()
                 if any(word in text_lower for word in SPAM_KEYWORDS):
-                    print(f"found: спам от {user.first_name}. Удаляю сообщение...")
+                    print(f"Удаляю спам от {user.first_name}: {msg.text[:20]}...")
                     try:
                         bot.delete_message(CHAT_ID, msg.message_id)
-                        # Если хочешь сразу банить людей за спам, раскомментируй строку ниже:
-                        # bot.ban_chat_member(CHAT_ID, user.id)
                     except Exception as e:
-                        print(f"Error deleting message: {e}")
+                        print(f"Не удалось удалить: {e}")
 
-        print("--- Очистка завершена успешно ---")
+        print("--- Очистка завершена ---")
 
     except Exception as e:
-        print(f"Критическая ошибка: {e}")
+        print(f"Ошибка: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
     if not TOKEN or not CHAT_ID:
-        print("ОШИБКА: Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID в Secrets!")
+        print("Ошибка: Проверьте токены в Secrets!")
         sys.exit(1)
     clean_chat()
