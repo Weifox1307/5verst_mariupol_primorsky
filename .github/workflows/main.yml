@@ -1,0 +1,47 @@
+name: Telegram AntiSpam & Keep-Alive
+
+on:
+  schedule:
+    # Запуск каждые 30 минут для проверки чата
+    - cron: '*/30 * * * *'
+    # Запуск 1-го числа каждого месяца для "оживления" репозитория
+    - cron: '0 0 1 * *'
+  workflow_dispatch: # Позволяет запустить вручную кнопкой в интерфейсе GitHub
+
+permissions:
+  contents: write  # Обязательно для возможности делать коммиты
+
+jobs:
+  run-cleaner:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          # Используем встроенный токен, он никогда не протухнет
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install pyTelegramBotAPI
+
+      - name: Run cleaner script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bot.py
+
+      # Делаем пустой коммит раз в месяц, чтобы GitHub не остановил Workflow
+      - name: Keep-alive commit
+        if: github.event.schedule == '0 0 1 * *'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git commit --allow-empty -m "Monthly keep-alive commit"
+          git push
