@@ -8,63 +8,72 @@ CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 bot = telebot.TeleBot(TOKEN)
 
-# Список слов, которые ТОЧНО спам (для моментального удаления)
-HARD_STOP_WORDS = ["@sberbank", "sberbank_client_bot", "комплектовщик", "6200"]
+# Самые жесткие маркеры из твоего примера
+HARD_STOP_WORDS = [
+    "sberbank", "сбербанк", "выплата", "заявка онлайн", 
+    "зимней поддержки", "карта cбербанка", "@sberbank",
+    "комплектовщики", "склад", "ночные"
+]
 
-# Тот самый "умный" фильтр для сомнительных текстов
-def is_spam(text):
-    text = text.lower()
+def clean_text(text):
+    if not text: return ""
+    # Убираем лишние символы, невидимые пробелы и приводим к нижнему регистру
+    return re.sub(r'[^\w\s]', '', text).lower().strip()
+
+def is_spam(msg):
+    # Проверяем и текст, и описание к фото/видео
+    content = msg.text or msg.caption or ""
+    if not content: return False
+    
+    text_normal = content.lower()
+    text_no_signs = clean_text(content)
+    
+    # 1. Проверка на жесткие стоп-слова
+    for word in HARD_STOP_WORDS:
+        if word in text_normal or word in text_no_signs:
+            return True
+            
+    # 2. Умный фильтр (баллы)
     score = 0
-    if any(word in text for word in ["выплат", "деньги", "карт", "сбер", "доход", "заработ", "₽"]): score += 2
-    if any(word in text for word in ["жми", "переходи", "оформляй", "забирай", "подпишись"]): score += 1
-    if any(word in text for word in ["склад", "вакансия", "зп", "подработка"]): score += 2
-    if re.search(r'http|@\w+', text): score += 2
-    emoji_count = len(re.findall(r'[^\w\s,.]', text))
-    if emoji_count > 5: score += 1
-    return score >= 3 or any(word in text for word in HARD_STOP_WORDS)
+    if any(w in text_normal for w in ["₽", "выплат", "карт", "деньги", "сбер"]): score += 2
+    if any(w in text_normal for w in ["жми", "переходи", "оформляй", "забирай"]): score += 2
+    if re.search(r'http|@\w+|t\.me', text_normal): score += 2
+    if len(re.findall(r'[^\w\s,.]', content)) > 10: score += 1 # Много эмодзи
+    
+    return score >= 3
 
 def clean_chat():
     print(f"--- Глубокая очистка чата {CHAT_ID} ---")
     try:
-        # 1. Сначала пробуем стандартные обновления
-        updates = bot.get_updates(limit=100, timeout=5, offset=-100)
-        
-        # 2. А теперь хитрость: пробуем удалить последние ID сообщений "вслепую"
-        # Это поможет зацепить те сообщения, которые get_updates уже не показывает.
-        # Мы возьмем последнее сообщение и пройдемся по 50 назад.
-        
-        last_msg_id = 0
-        if updates:
-            last_msg_id = updates[-1].message.message_id
-            print(f"Последний найденный ID: {last_msg_id}")
-        
-        # Если обновлений нет, попробуем угадать ID (это безопасно)
-        # Бот просто будет пробовать удалить последние 50 сообщений, если они подходят под спам
-        for i in range(100):
-            current_id = last_msg_id - i
-            if current_id <= 0: continue
-            
-            # Внимание: бот не может "прочитать" старое сообщение по ID, 
-            # он может только попробовать его удалить. 
-            # Поэтому мы полагаемся на те обновления, которые он реально видит.
-            
-        for update in updates:
-            if not update.message: continue
-            msg = update.message
-            
-            if str(msg.chat.id) != str(CHAT_ID): continue
+        # Берем последние 100 событий
+        updates = bot.get_updates(limit=100, timeout=10, offset=-100)
+        if not updates:
+            print("Новых обновлений нет.")
+            return
 
-            # Удаляем ботов
-            if msg.from_user.is_bot and msg.from_user.username != bot.get_me().username:
+        for update in updates:
+            msg = update.message
+            if not msg or str(msg.chat.id) != str(CHAT_ID):
+                continue
+
+            user = msg.from_user
+            
+            # Игнорируем себя
+            if user.username == bot.get_me().username:
+                continue
+
+            # Удаляем ботов (кроме себя)
+            if user.is_bot:
                 try:
-                    bot.ban_chat_member(CHAT_ID, msg.from_user.id)
+                    bot.ban_chat_member(CHAT_ID, user.id)
                     bot.delete_message(CHAT_ID, msg.message_id)
+                    print(f"Забанен бот: @{user.username}")
                 except: pass
                 continue
 
-            # Проверка текста
-            if msg.text and is_spam(msg.text):
-                print(f"Удаляю спам: {msg.text[:30]}...")
+            # Проверка контента
+            if is_spam(msg):
+                print(f"Удаляю спам от {user.first_name} (ID: {msg.message_id})")
                 try:
                     bot.delete_message(CHAT_ID, msg.message_id)
                 except Exception as e:
@@ -73,8 +82,9 @@ def clean_chat():
 
         print("--- Очистка завершена ---")
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"Ошибка в основном цикле: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
-    if TOKEN and CHAT_ID: clean_chat()
+    if TOKEN and CHAT_ID:
+        clean_chat()
